@@ -1,0 +1,127 @@
+suite: image registry priority
+
+templates:
+  - templates/starrockscluster.yaml
+  - templates/init-pwd/job.yaml
+
+tests:
+  # Test 1: no registry set anywhere — images must have no prefix
+  - it: no registry set - images have no prefix
+    template: templates/starrockscluster.yaml
+    set:
+      starrocksCluster.enabledCn: true
+    asserts:
+      - equal:
+          path: spec.starRocksFeSpec.image
+          value: "starrocks/fe-ubuntu:3.5-latest"
+      - equal:
+          path: spec.starRocksBeSpec.image
+          value: "starrocks/be-ubuntu:3.5-latest"
+      - equal:
+          path: spec.starRocksCnSpec.image
+          value: "starrocks/cn-ubuntu:3.5-latest"
+
+  # Test 2: only global.image.registry set — all components must use it
+  - it: global.image.registry prefixes all component images
+    template: templates/starrockscluster.yaml
+    set:
+      starrocksCluster.enabledCn: true
+      global.image.registry: global.example.com
+    asserts:
+      - equal:
+          path: spec.starRocksFeSpec.image
+          value: "global.example.com/starrocks/fe-ubuntu:3.5-latest"
+      - equal:
+          path: spec.starRocksBeSpec.image
+          value: "global.example.com/starrocks/be-ubuntu:3.5-latest"
+      - equal:
+          path: spec.starRocksCnSpec.image
+          value: "global.example.com/starrocks/cn-ubuntu:3.5-latest"
+
+  # Test 3: componentValues.image.registry overrides global for FE/BE/CN
+  - it: componentValues.image.registry overrides global for FE, BE and CN
+    template: templates/starrockscluster.yaml
+    set:
+      starrocksCluster.enabledCn: true
+      global.image.registry: global.example.com
+      starrocksCluster.componentValues.image.registry: cluster.example.com
+    asserts:
+      - equal:
+          path: spec.starRocksFeSpec.image
+          value: "cluster.example.com/starrocks/fe-ubuntu:3.5-latest"
+      - equal:
+          path: spec.starRocksBeSpec.image
+          value: "cluster.example.com/starrocks/be-ubuntu:3.5-latest"
+      - equal:
+          path: spec.starRocksCnSpec.image
+          value: "cluster.example.com/starrocks/cn-ubuntu:3.5-latest"
+
+  # Test 4: per-component registry wins over both componentValues and global
+  - it: per-component registry overrides componentValues and global
+    template: templates/starrockscluster.yaml
+    set:
+      starrocksCluster.enabledCn: true
+      global.image.registry: global.example.com
+      starrocksCluster.componentValues.image.registry: cluster.example.com
+      starrocksFESpec.image.registry: fe-only.example.com
+    asserts:
+      - equal:
+          path: spec.starRocksFeSpec.image
+          value: "fe-only.example.com/starrocks/fe-ubuntu:3.5-latest"
+      # BE and CN are unaffected by the FE override — they fall back to componentValues
+      - equal:
+          path: spec.starRocksBeSpec.image
+          value: "cluster.example.com/starrocks/be-ubuntu:3.5-latest"
+      - equal:
+          path: spec.starRocksCnSpec.image
+          value: "cluster.example.com/starrocks/cn-ubuntu:3.5-latest"
+
+  # Test 5: feproxy is not covered by componentValues — it falls back directly to global
+  - it: feproxy uses global registry and is unaffected by componentValues
+    template: templates/starrockscluster.yaml
+    set:
+      global.image.registry: global.example.com
+      starrocksCluster.componentValues.image.registry: cluster.example.com
+      starrocksFeProxySpec.enabled: true
+      starrocksFeProxySpec.image.repository: nginx
+      starrocksFeProxySpec.image.tag: "1.24.0"
+    asserts:
+      # FE and BE pick up the componentValues registry
+      - equal:
+          path: spec.starRocksFeSpec.image
+          value: "cluster.example.com/starrocks/fe-ubuntu:3.5-latest"
+      - equal:
+          path: spec.starRocksBeSpec.image
+          value: "cluster.example.com/starrocks/be-ubuntu:3.5-latest"
+      # feproxy skips componentValues and uses global directly
+      - equal:
+          path: spec.starRocksFeProxySpec.image
+          value: "global.example.com/nginx:1.24.0"
+
+  # Test 6: feproxy per-component registry overrides global
+  - it: feproxy per-component registry overrides global
+    template: templates/starrockscluster.yaml
+    set:
+      global.image.registry: global.example.com
+      starrocksFeProxySpec.enabled: true
+      starrocksFeProxySpec.image.repository: nginx
+      starrocksFeProxySpec.image.tag: "1.24.0"
+      starrocksFeProxySpec.image.registry: feproxy-only.example.com
+    asserts:
+      - equal:
+          path: spec.starRocksFeSpec.image
+          value: "global.example.com/starrocks/fe-ubuntu:3.5-latest"
+      - equal:
+          path: spec.starRocksFeProxySpec.image
+          value: "feproxy-only.example.com/nginx:1.24.0"
+
+  # Test 7: init-password job inherits the FE image helper (including its registry resolution)
+  - it: init-password job image inherits FE registry resolution
+    template: templates/init-pwd/job.yaml
+    set:
+      global.image.registry: global.example.com
+      initPassword.enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "global.example.com/starrocks/fe-ubuntu:3.5-latest"
